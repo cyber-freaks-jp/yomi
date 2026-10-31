@@ -15,7 +15,7 @@ import { createCliLogger } from '../util/log.js'
  * resulting session here — auth token, certificate, refresh token, mid,
  * and the E2EE NaCl keypair. Shared between Yomi MCP and Yomi Desktop.
  */
-const SERVICE_NAME = 'dev.rikai.yomi.credentials'
+const SERVICE_NAME = 'jp.cyber-freaks.yomi-reviewed.credentials'
 const authLog = createCliLogger('AUTH')
 
 export interface CredentialResult {
@@ -40,7 +40,7 @@ class KeychainCommands {
    */
   async set(account: string, password: string): Promise<CredentialResult> {
     return new Promise((resolve) => {
-      const child = spawn('security', [
+      const child = spawn('/usr/bin/security', [
         'add-generic-password',
         '-s',
         this.serviceName,
@@ -49,7 +49,8 @@ class KeychainCommands {
         '-w',
         password,
         '-U',
-        '-A',
+        '-T',
+        '/usr/bin/security',
       ])
 
       let stderr = ''
@@ -88,7 +89,7 @@ class KeychainCommands {
    */
   async get(account: string): Promise<CredentialResult> {
     return new Promise((resolve) => {
-      const child = spawn('security', [
+      const child = spawn('/usr/bin/security', [
         'find-generic-password',
         '-s',
         this.serviceName,
@@ -140,7 +141,7 @@ class KeychainCommands {
    */
   async delete(account: string): Promise<CredentialResult> {
     return new Promise((resolve) => {
-      const child = spawn('security', [
+      const child = spawn('/usr/bin/security', [
         'delete-generic-password',
         '-s',
         this.serviceName,

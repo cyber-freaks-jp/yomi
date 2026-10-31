@@ -10,7 +10,7 @@ import { encode } from '@toon-format/toon'
 // Yomi logs in on its own (via the `login`/`login_complete` tools, or
 // `npx @rikaidev/yomi login`); session is shared with Yomi Desktop.
 export const NO_CREDENTIALS_MESSAGE =
-  'No persisted LINE session. Call the `login` tool, or run `npx @rikaidev/yomi login` in a terminal.'
+  'No persisted LINE session. Use the login tool from this reviewed fork. Do not install or run the upstream npm package.'
 
 // Shown when LINE invalidated a previously working session — distinct from
 // "never logged in" so the model tells the user the right story: the MCP

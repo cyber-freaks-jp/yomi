@@ -1,3 +1,8 @@
+> **Personal reviewed fork:** use only the locally installed pinned runtime described in
+> [SECURITY_REVIEW.md](SECURITY_REVIEW.md). The upstream installation instructions below
+> are retained as historical documentation and are **not** the instructions for this fork.
+> Do not run `npx @rikaidev/yomi` or integrate the upstream desktop application.
+
 <!-- rikai-logo -->
 <p align="center">
   <picture>

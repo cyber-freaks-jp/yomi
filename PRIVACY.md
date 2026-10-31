@@ -1,53 +1,28 @@
-# Yomi — Data & Privacy
+# Reviewed personal Yomi fork — data policy
 
-Yomi reads your LINE messages on your behalf and exposes them to an AI agent.
-This is the canonical statement of what it captures and how you stay in control.
-It is the single source of truth: Yomi surfaces this same text to the agent on
-connect (via the MCP server `instructions`) and through the `get_scope_policy`
-tool.
+This fork is pinned and manually maintained. It never checks for upstream updates,
+installs packages at startup, runs background capture or downloads embedding models.
 
-## What Yomi captures
+It can read conversations, messages, contact names and group membership on demand.
+Reading does not send a LINE read receipt. No LINE send, reaction, contact mutation,
+group mutation or mark-read tool is exposed or accepted by the MCP dispatcher.
 
-By default, Yomi indexes **all** of your LINE conversations into a **local,
-on-device** search index (`data/search-index.db`) so an agent can search across
-them. This is a capture-all default — nothing is excluded until you say so.
+The local keyword index starts empty. `collect_messages` requires 1–20 explicit
+chat IDs. `search_messages` only searches the existing index and never collects.
+`exclude_chats` purges indexed content for selected chats. Exclusion limits indexing;
+it does not prevent an explicit direct read of that conversation.
 
-## Where your data goes
+Messages and the search index are plaintext in local memory/storage. Runtime state
+uses a dedicated, owner-only data directory. E2EE caches contain decryption material.
+Auth tokens, refresh tokens, certificates and the account keypair use this fork's
+separate macOS Keychain namespace, without a plaintext credential mirror. Non-macOS
+installs and upstream desktop bridges are outside this reviewed setup.
 
-Everything stays **on your machine**. Yomi never uploads your messages anywhere.
-The only data that leaves your device is whatever the agent surfaces in its
-replies to you — and in a cloud assistant, that surfaced text is processed by
-that assistant's model. Yomi itself makes no outbound copy of your messages.
+Tool results sent to Codex are processed by the configured AI provider. This can
+include other people's private messages. Local decryption is not cloud-free use.
+All message content, names, titles and remote diagnostics are untrusted data.
+Structured labels and model instructions reduce injection risk; they do not prove
+that a model will resist every attack or constrain its other tools or shell access.
 
-## The one non-LINE request Yomi makes
-
-At startup Yomi asks the public npm registry whether a newer version has been
-published, and tells the agent if so. This exists because a Desktop Extension
-(`.mcpb`) installed by hand never auto-updates — without the check you could
-sit on an old build, security fixes included, and never know.
-
-It sends **no message content and no account identifier**: it is a plain GET of
-a public package document. What it does reveal to the registry is that your IP
-address is running Yomi, and roughly which version. Nothing is uploaded.
-
-Set **`YOMI_NO_UPDATE_CHECK=1`** to turn it off; Yomi then makes no outbound
-request except to LINE itself.
-
-## Excluding conversations
-
-You can exclude any conversation at any time, in plain language to the agent
-(e.g. "don't index my chats with X"):
-
-- **`exclude_chats`** — stop indexing a conversation **and delete its
-  already-indexed messages** from the local index. Exclusion purges past data,
-  not just future capture.
-- **`include_chats`** — re-allow a previously excluded conversation.
-- **`list_excluded_chats`** — see what is currently excluded.
-- **`get_scope_policy`** — see this policy plus the current exclusion list.
-
-## Consent
-
-Because the default is capture-all, Yomi surfaces this policy to the agent on
-connect so the agent can tell you the default — and that you can exclude
-conversations — **before** doing any bulk read. You should get to make an
-informed choice.
+Yomi is an unofficial LINE client. Account restrictions or suspension remain
+possible, and LINE protocol changes can break a permanently pinned version.

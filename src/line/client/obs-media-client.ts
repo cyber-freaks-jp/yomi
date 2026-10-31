@@ -36,6 +36,7 @@ export async function downloadLineMessageData(
   const requestUrl = `https://${OBS_HOST}/r/${namespace}/m/${encodeURIComponent(messageId)}${suffix}`
   const response = await fetch(requestUrl, {
     method: 'GET',
+    redirect: 'error',
     headers: {
       Accept: 'application/json, text/plain, */*',
       'User-Agent': LINE_APP_CONFIG.userAgent,

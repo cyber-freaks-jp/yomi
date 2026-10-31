@@ -136,12 +136,6 @@ export function sendRequest(
               console.error(
                 `[LINE] Decode failed on ${path}: ${error?.message || error} [${body.length}B]`,
               )
-              console.error(
-                `[LINE] Decode first 64B on ${path}: ${body.subarray(0, 64).toString('hex')}`,
-              )
-              console.error(
-                `[LINE] Decode last 64B on ${path}: ${body.subarray(Math.max(0, body.length - 64)).toString('hex')}`,
-              )
               reject(error)
             }
           } else {

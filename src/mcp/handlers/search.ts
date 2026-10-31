@@ -1,45 +1,15 @@
-/**
- * Yomi cross-conversation search tool handlers — collect_messages and
- * search_messages.
- *
- * Split out from handlers.ts because these two tools are the boundary
- * between the pure-query LINE tools (handlers.ts) and the local search
- * index in ../search/ (see store.ts, collector.ts): collect_messages
- * writes to that index, search_messages reads from it. No other tool
- * touches the index.
- *
- * search_messages is HYBRID: it always runs FTS5 keyword search (bigram-
- * preprocessed, so it covers every indexed message and guarantees exact
- * substring matches are never lost) and, when embeddings exist for the
- * current model, also runs semantic search (cosine similarity over
- * transformers.js embeddings, see ../search/default-embedder.ts). The two
- * ranked lists are fused by Reciprocal Rank Fusion (see fuseByRrf) so a
- * result that either method ranks highly surfaces near the top. This is
- * deliberately not "semantic OR keyword": pure semantic over a partially-
- * embedded index silently drops exact matches that live in un-embedded
- * messages (the "search for a place name misses the exact same place name" bug),
- * and pure keyword misses paraphrases. Which methods actually contributed
- * is always reported via the `mode` field (`hybrid` | `semantic` |
- * `keyword`), never hidden.
- */
+/** Reviewed keyword search: explicit per-chat collection, no model or auto-fetch. */
 
 import type { LineProtocolService } from '../../line/core/service.js'
 import { collectMessages } from '../../search/collector.js'
-import { getDefaultEmbedder } from '../../search/default-embedder.js'
 import {
-  getEmbeddingCount,
   getIndexedMessageCount,
   getMessageContext,
   type SearchResult,
-  type SemanticSearchResult,
   searchMessages,
-  semanticSearch,
 } from '../../search/store.js'
-import { createCliLogger } from '../../util/log.js'
 import { createPhiAccumulator, maskInto, phiNote } from '../phi-guard.js'
 import { jsonText, toolError, toonText } from './shared.js'
-
-const log = createCliLogger('Yomi')
 
 /**
  * Reciprocal Rank Fusion constant. The standard k=60 from Cormack et al.:
@@ -113,122 +83,50 @@ export function applyConversationDiversity<T extends SearchResult>(
   return [...selected, ...deferred].slice(0, limit)
 }
 
-/**
- * Handle `collect_messages` — explicit bulk fetch of recent messages from
- * one or more LINE conversations into the local search index, batch-
- * embedding each chat's messages with the default embedder along the way
- * (best-effort — see ../search/collector.ts's embedAndStore for the
- * failure-never-blocks-collection guarantee). The only tool allowed to
- * bulk-fetch across chats; runs exactly once per call.
- *
- * @param service - Resumed LineProtocolService.
- * @param args - Tool arguments.
- * @returns MCP tool result summarizing what was indexed and embedded.
- */
+/** Collect only explicitly selected chats, without embeddings. */
 export async function handleCollectMessages(
   service: LineProtocolService,
   args: { chatIds?: string[]; perChat?: number },
 ) {
+  if (!Array.isArray(args.chatIds) || args.chatIds.length === 0) {
+    return toolError(
+      'Explicit chatIds are required; all-chat collection is disabled.',
+    )
+  }
   const summary = await collectMessages(service, {
     chatIds: args.chatIds,
     perChat: args.perChat,
-    embedder: getDefaultEmbedder(),
   })
   return {
     content: [{ type: 'text' as const, text: jsonText(summary) }],
   }
 }
 
-/**
- * Handle `search_messages` — hybrid keyword + semantic search, fused by
- * Reciprocal Rank Fusion (see fuseByRrf). Keyword search always runs and
- * covers every indexed message, so exact matches are never dropped;
- * semantic search additionally runs whenever vectors exist for the current
- * model, adding paraphrase recall. `mode` reports which methods contributed.
- *
- * Auto-collects on an empty index: the first search with a live session
- * transparently runs a full `collect_messages` across all conversations
- * before searching, so callers never have to know `collect_messages`
- * exists — searching "just works" out of the box. This is the one place
- * search itself may hit LINE; a non-empty index searches locally with no
- * network. Ongoing freshness is not this handler's job: the background
- * capture loop (see ../search/capture.ts) indexes incoming messages as they
- * arrive, so the index stays current without search re-collecting on every
- * query (which would cost tens of seconds of latency — not any rate limit,
- * which we have never observed). With an empty index and no session, it says
- * so honestly rather than returning a silently empty result.
- *
- * @param service - Resumed LineProtocolService (used only to auto-collect an empty index).
- * @param args - Tool arguments.
- * @returns MCP tool result with `{ mode, results }`, or an honest notice.
- */
+/** Search the existing local keyword index without fetching messages. */
 export async function handleSearchMessages(
-  service: LineProtocolService,
+  _service: LineProtocolService,
   args: { query: string; limit?: number },
 ) {
   if (!args.query) {
     return toolError('query is required.')
   }
   if (getIndexedMessageCount() === 0) {
-    if (!service.client) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: 'Search index is empty and there is no LINE session — log in first; the index then builds automatically on your next search.',
-          },
-        ],
-      }
-    }
-    log.info('search.auto_collect', { reason: 'empty_index' })
-    const summary = await collectMessages(service, {
-      embedder: getDefaultEmbedder(),
-    })
-    log.info('search.auto_collect_done', { ...summary })
-    if (getIndexedMessageCount() === 0) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: 'Nothing to search — auto-collect found no readable messages across your conversations.',
-          },
-        ],
-      }
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Search index is empty. Explicitly collect selected chatIds first; search never collects automatically.',
+        },
+      ],
     }
   }
   const limit = args.limit ?? 20
   // Pull a deeper candidate pool from each method than the caller's limit,
   // so RRF has enough overlap/depth to reorder meaningfully before slicing.
   const pool = Math.max(limit * 3, 30)
-  const embedder = getDefaultEmbedder()
-
   const keyword = searchMessages(args.query, pool)
-  let semantic: SemanticSearchResult[] = []
-  if (getEmbeddingCount(embedder.modelLabel) > 0) {
-    try {
-      semantic = await semanticSearch(args.query, pool, embedder)
-    } catch (error: any) {
-      log.warn('search.semantic_failed', {
-        error: error?.message ?? String(error),
-      })
-    }
-  }
-
-  let mode: 'hybrid' | 'semantic' | 'keyword'
-  let results: unknown[]
-  if (semantic.length > 0 && keyword.length > 0) {
-    mode = 'hybrid'
-    results = applyConversationDiversity(
-      fuseByRrf([keyword, semantic], pool),
-      limit,
-    )
-  } else if (semantic.length > 0) {
-    mode = 'semantic'
-    results = applyConversationDiversity(semantic, limit)
-  } else {
-    mode = 'keyword'
-    results = applyConversationDiversity(keyword, limit)
-  }
+  const mode = 'keyword'
+  const results = applyConversationDiversity(keyword, limit)
 
   const acc = createPhiAccumulator()
   const maskedResults = (results as (SearchResult & { score?: number })[]).map(

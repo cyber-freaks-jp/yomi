@@ -242,33 +242,21 @@ export class CredentialStore {
    * @returns Serialized credential blob or null when missing.
    */
   private async readPersistedBlob(): Promise<string | null> {
-    try {
-      const fs = await import('node:fs/promises')
-      const fileData = await fs.readFile(this.filePath, 'utf-8')
-      if (fileData?.trim()) {
-        return fileData
-      }
-    } catch {}
-
     if (this.secureStorageEnabled && this.keychainService) {
       const result = await this.keychainService.getCredential(
         this.keychainAccount,
       )
-      if (result.success && result.password) {
-        try {
-          const fs = await import('node:fs/promises')
-          await fs.mkdir(dirname(this.filePath), {
-            recursive: true,
-            mode: 0o700,
-          })
-          await fs.writeFile(this.filePath, result.password, { mode: 0o600 })
-        } catch {}
-        return result.password
-      }
-      return null
+      if (result.success && result.password) return result.password
+      if (result.error === 'Credential not found') return null
+      throw new Error('Cannot read reviewed Yomi Keychain credentials.')
     }
-
-    return null
+    try {
+      const fs = await import('node:fs/promises')
+      return await fs.readFile(this.filePath, 'utf-8')
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') return null
+      throw error
+    }
   }
 
   /**
@@ -303,30 +291,26 @@ export class CredentialStore {
     }
 
     if (this.secureStorageEnabled && this.keychainService) {
-      await this.keychainService.setCredential(this.keychainAccount, blob)
-      try {
-        const fs = await import('node:fs/promises')
-        await fs.mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 })
-        await fs.writeFile(this.filePath, blob, { mode: 0o600 })
-      } catch {}
+      const result = await this.keychainService.setCredential(
+        this.keychainAccount,
+        blob,
+      )
+      if (!result.success)
+        throw new Error('Cannot persist reviewed Yomi Keychain credentials.')
       this.lastPersistedBlob = blob
       return
     }
 
-    try {
-      const fs = await import('node:fs/promises')
-      // `dirname`, not a slice on '/': a Windows path has no forward slash, so
-      // the slice yielded '' and `mkdir('')` threw ENOENT — swallowed by the
-      // catch below, so every credential write on Windows silently failed and
-      // no session (auth token, mid, E2EE keypair) was ever persisted.
-      await fs.mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 })
-      await fs.writeFile(this.filePath, blob, { mode: 0o600 })
-      // `mode` is ignored when the file already exists, so repair older installs.
-      await fs.chmod(this.filePath, 0o600).catch(() => {})
-      this.lastPersistedBlob = blob
-    } catch (error) {
-      console.error('[Yomi] Failed to save credentials:', error)
-    }
+    const fs = await import('node:fs/promises')
+    // `dirname`, not a slice on '/': a Windows path has no forward slash, so
+    // the slice yielded '' and `mkdir('')` threw ENOENT — swallowed by the
+    // catch below, so every credential write on Windows silently failed and
+    // no session (auth token, mid, E2EE keypair) was ever persisted.
+    await fs.mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 })
+    await fs.writeFile(this.filePath, blob, { mode: 0o600 })
+    // `mode` is ignored when the file already exists, so repair older installs.
+    await fs.chmod(this.filePath, 0o600).catch(() => {})
+    this.lastPersistedBlob = blob
   }
 
   /**
@@ -339,19 +323,21 @@ export class CredentialStore {
       persisted: Record<string, any>,
     ) => Record<string, any> | void,
   ) {
-    this.persistQueue = this.persistQueue.then(async () => {
-      if (mutatePersisted) {
-        const persisted = parseCredentialBlob(await this.readPersistedBlob())
-        const next = mutatePersisted(persisted) || persisted
-        const blob = JSON.stringify(next)
-        this.cache = new Map(Object.entries(next))
-        await this.persistBlob(blob)
-        return
-      }
+    this.persistQueue = this.persistQueue
+      .catch(() => {})
+      .then(async () => {
+        if (mutatePersisted) {
+          const persisted = parseCredentialBlob(await this.readPersistedBlob())
+          const next = mutatePersisted(persisted) || persisted
+          const blob = JSON.stringify(next)
+          this.cache = new Map(Object.entries(next))
+          await this.persistBlob(blob)
+          return
+        }
 
-      const blob = JSON.stringify(Object.fromEntries(this.cache))
-      await this.persistBlob(blob)
-    })
+        const blob = JSON.stringify(Object.fromEntries(this.cache))
+        await this.persistBlob(blob)
+      })
     await this.persistQueue
   }
 
@@ -426,7 +412,13 @@ export class CredentialStore {
     await this.volatile.clear()
 
     if (this.secureStorageEnabled && this.keychainService) {
-      await this.keychainService.deleteCredential(this.keychainAccount)
+      const result = await this.keychainService.deleteCredential(
+        this.keychainAccount,
+      )
+      if (!result.success && result.error !== 'Credential not found') {
+        throw new Error('Cannot delete reviewed Yomi Keychain credentials.')
+      }
+      // Secure mode never creates or reads a plaintext credential mirror.
       return
     }
 
